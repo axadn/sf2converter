@@ -102,6 +102,23 @@ function shouldAddToMixDown(newSample: SampleHeader, oldSample: SampleJob) {
         oldSample.mixDown.length === 1;
 }
 
+function generateSuggestedSamplerIndicesPerZone(matrix: SampleLookupMatrix) {
+    for (let i = 0; i < matrix.length; ++i) {
+        let numEncountered = 0;
+        let lastEncountered = null;
+        for (let j = 0; j < matrix[i].length; ++j) {
+            if(matrix[i][j] === lastEncountered){
+                continue;
+            }
+            if (typeof matrix[i][j].suggestedSamplerIndex === 'undefined') {
+                matrix[i][j].suggestedSamplerIndex = numEncountered;
+            }
+            lastEncountered = matrix[i][j];
+            ++numEncountered;
+        }
+    }
+}
+
 function isCompatibleSampleType(sample: Sample) {
     switch (sample.header.type) {
         case SampleType.Left:
