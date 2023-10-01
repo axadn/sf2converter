@@ -14,6 +14,8 @@ const soundFont = new SoundFont2(buffer);
 type OutputZone = {
     id: number,
     sampleKey: string,
+    keyRange: Range,
+    velRange: Range,
     modulators?: ZoneMap<Modulator>,
     generators: ZoneMap<Generator>,
     suggestedSamplerIndex?: number
@@ -81,6 +83,8 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
 
         const outputZone: OutputZone = {
             id: outputZoneId++,
+            keyRange,
+            velRange,
             sampleKey: zone.sample.header.name,
             modulators: zone.modulators,
             generators: zone.generators
