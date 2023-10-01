@@ -11,14 +11,41 @@ const buffer = fs.readFileSync(path.resolve('./dark chat_3.sf2'));
 const soundFont = new SoundFont2(buffer);
 //https://www.npmjs.com/package/sample-player
 
-/* Known restrictions/limitations : 
- * 1. Only one sample is allowed per zone. If a left and a right channel are 
- *    detected on the same zone they will be mixed down into a single sample.
- * 2. Explicit zones will not work with the web-based samplers we are targeting.
- *    Root notes will be used to define new zones.
- */
+type OutputZone = {
+    sampleKey: string,
+    modulators?: ZoneMap<Modulator>,
+    generators: ZoneMap<Generator>,
+    suggestedSamplerIndex?: number
+}
 
-type OutputZone = { sampleKey: string, modulators: ZoneMap<Modulator>, generators: ZoneMap<Generator>; }
+/* This matrix will aid in coming up with a schema of samplers to handle the different velocity layers,
+ * as well as looking up which sample/sampler to route an incoming MIDI event to, 
+ * given an arbitrarily irregular mapping. 
+ * This is useful in cases where the key/velocity zones are not perfectly grid-like. For example,
+ * consider the mapping below.
+ *          
+ *             _______ ____________ _____
+ *            |       |    sample  |     |
+ * y -        |       |____________|sample    Each sampler's job is to interpolate sample 
+ * axis:    20|sample |  sample    |     |    pitch/timbre along x axis. (The current implementations
+ *velocity    |       |____________|_____|    only allow 1 sample per note). 
+ *          10|_______|        |         |    So we try to arrange them in layers like below
+ *            |sample |sample  | sample  |    to batch as many samples as possible into each   
+ *          0 |_______|________|_________|    sampler. This will minimize the number of instances needed.
+ *             0   10   20   30   40   50 
+ * 
+ *                 x-axis: note number
+ * 
+              _______ ____________ _____     
+ *            |       |    3       |     |  - Sampler3
+ * y -        |       |____________|     |    
+ * axis:    20|  3    |  2         | 2   |  - Sampler2 
+ *velocity    |       |____________|_____|    
+ *          10|_______|        |         |   
+ *            |1      | 1      |  1      |   
+ *          0 |_______|________|_________|  - Sampler1
+ *             0   10   20   30   40   50 
+ */
 type SampleLookupMatrix = OutputZone[][];
 interface SampleJob {
     header: SampleHeader;
