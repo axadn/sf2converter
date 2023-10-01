@@ -11,5 +11,6 @@ Or worse, they force users to pick from remotely-hosted sample packs.
      detected on the same zone they will be mixed down into a single sample. Otherwise, subsequent samples
      found in the same zone will be dropped in favor of the first sample.
   3. Explicit zones (key-ranges) will not work with the web-based samplers we are targeting.
-     Root notes will be used to define new zones. Support for explicit zones may be added eventually.  
+     Root notes will be used to define new zones. Support for explicit zones may be added eventually, as I move towards
+     extending them or implementing my own samplers without this restriction. 
  
