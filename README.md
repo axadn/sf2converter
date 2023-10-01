@@ -4,3 +4,10 @@ This package aims to convert .sf2 files into a format more suitable for playback
 
 Similar converters/webpack loaders/sf2 players exist, but they are missing vital features (like velocity layers).
 Or worse, they force users to pick from remotely-hosted sample packs.
+
+### Known restrictions/limitations 
+   1. Only one sample is allowed per zone. If a left and a right channel are 
+     detected on the same zone they will be mixed down into a single sample.
+  2. Explicit zones (key-ranges) will not work with the web-based samplers we are targeting.
+     Root notes will be used to define new zones. Support for explicit zones may be added eventually.  
+ 
