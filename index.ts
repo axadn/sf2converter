@@ -12,6 +12,7 @@ const soundFont = new SoundFont2(buffer);
 //https://www.npmjs.com/package/sample-player
 
 type OutputZone = {
+    id: number,
     sampleKey: string,
     modulators?: ZoneMap<Modulator>,
     generators: ZoneMap<Generator>,
@@ -60,6 +61,7 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
         matrix[i] = new Array(velocityRanges.length);
     }
     const sampleJobs = new Map<string, SampleJob>();
+    let outputZoneId = 0;
     zones.forEach(zone => {
         if (!isCompatibleSampleType(zone.sample)) {
             return;
@@ -78,6 +80,7 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
         }
 
         const outputZone: OutputZone = {
+            id: outputZoneId++,
             sampleKey: zone.sample.header.name,
             modulators: zone.modulators,
             generators: zone.generators
@@ -117,7 +120,7 @@ function generateSuggestedSamplerIndicesPerZone(matrix: SampleLookupMatrix) {
             if (typeof matrix[i][j]!.suggestedSamplerIndex === 'undefined') {
                 matrix[i][j]!.suggestedSamplerIndex = numEncountered;
             }
-            lastEncountered = matrix[i][j];
+            lastEncountered = matrix[i][j]?.id;
             ++numEncountered;
         }
     }
