@@ -5,6 +5,8 @@ This package aims to convert .sf2 files into a format more suitable for playback
 Similar converters/webpack loaders/sf2 players exist, but they are missing vital features (like velocity layers).
 Or worse, they force users to pick from remotely-hosted sample packs.
 
+### Installation
+LAME must be installed and available on the PATH environment variable in order to render samples to MP3
 
 ### Known restrictions/limitations 
    1. Only one sample is allowed per zone. If a left and a right channel are 
