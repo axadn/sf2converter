@@ -73,18 +73,21 @@ function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: Range[],
             while (keyRanges[keyBucket + numKeyBuckets - 1].hi < keyRange.hi) {
                 ++numKeyBuckets;
             }
+
+            const outputZone: OutputZone = {
+                sampleKey: zone.sample.header.name,
+                modulators: zone.modulators,
+                generators: zone.generators
+            };
             for (let i = keyBucket; i < keyBucket + numKeyBuckets; ++i) {
                 for (let j = velBucket; j < velBucket + numVelocityBuckets; ++j) {
-                    if (matrix[i][j] && areRightAndLeftSample(
-                        sampleJobs.get(matrix[i][j].sampleKey)!.header, zone.sample.header)) {
+                    if (matrix[i][j] && shouldAddToMixDown(zone.sample.header,
+                        sampleJobs.get(matrix[i][j].sampleKey)!)
+                    ) {
                         sampleJobs.get(matrix[i][j].sampleKey)!.mixDown.push(zone.sample);
                     }
-                    else {
-                        matrix[i][j] = {
-                            sampleKey: zone.sample.header.name,
-                            modulators: zone.modulators,
-                            generators: zone.generators
-                        };
+                    else if(!matrix[i][j]) {
+                        matrix[i][j] = outputZone;
                         sampleJobs.set(zone.sample.header.name,
                             { header: zone.sample.header, mixDown: [zone.sample] });
                     }
@@ -93,6 +96,10 @@ function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: Range[],
         });
     });
     return { matrix, sampleJobs };
+}
+function shouldAddToMixDown(newSample: SampleHeader, oldSample: SampleJob) {
+    return areRightAndLeftSample(oldSample.header, newSample) &&
+        oldSample.mixDown.length === 1;
 }
 
 function isCompatibleSampleType(sample: Sample) {
