@@ -1,8 +1,10 @@
 import { describe, it, test } from "node:test";
-import { generateNonOverlappingRanges, assignSamplesToMatrixCells } from "../index";
+import { generateNonOverlappingRanges, assignSamplesToMatrixCells, generateSuggestedSamplerIndices } from "../index";
 import { GeneratorType, InstrumentZone, Range, SampleType } from "soundfont2";
 import { createMockSample } from "./helpers/mockSample";
 import { createMockInstrumentZone } from "./helpers/mockInstrumentZone";
+import { createMockOutputZone } from "./helpers/mockOutputZone";
+
 import * as assert from "node:assert";
 describe('non overlapping range generator', function () {
   it('should generate correct non-overlapping ranges', function () {
@@ -34,7 +36,7 @@ describe('sample lookup matrix generator', () => {
   it('should assign samples to the right cells', () => {
     const zones: InstrumentZone[] = [
       createMockInstrumentZone({ lo: 0, hi: 40 },
-        createMockSample({ type: SampleType.Mono, name:'quiet_left' }),
+        createMockSample({ type: SampleType.Mono, name: 'quiet_left' }),
         {
           [GeneratorType.VelRange]: {
             range: { lo: 0, hi: 16 },
@@ -42,7 +44,7 @@ describe('sample lookup matrix generator', () => {
           }
         }),
       createMockInstrumentZone({ lo: 41, hi: 50 },
-        createMockSample({ type: SampleType.Mono, name:'quiet_right' }),
+        createMockSample({ type: SampleType.Mono, name: 'quiet_right' }),
         {
           [GeneratorType.VelRange]: {
             range: { lo: 0, hi: 16 },
@@ -50,7 +52,7 @@ describe('sample lookup matrix generator', () => {
           }
         }),
       createMockInstrumentZone({ lo: 0, hi: 20 },
-        createMockSample({ type: SampleType.Mono, name:'loud_left' }),
+        createMockSample({ type: SampleType.Mono, name: 'loud_left' }),
         {
           [GeneratorType.VelRange]: {
             range: { lo: 17, hi: 40 },
@@ -58,7 +60,7 @@ describe('sample lookup matrix generator', () => {
           }
         }),
       createMockInstrumentZone({ lo: 21, hi: 40 },
-        createMockSample({ type: SampleType.Mono, name:'loud_mid'}),
+        createMockSample({ type: SampleType.Mono, name: 'loud_mid' }),
         {
           [GeneratorType.VelRange]: {
             range: { lo: 17, hi: 40 },
@@ -66,7 +68,7 @@ describe('sample lookup matrix generator', () => {
           }
         }),
       createMockInstrumentZone({ lo: 41, hi: 45 },
-        createMockSample({ type: SampleType.Mono, name:'loud_right'}),
+        createMockSample({ type: SampleType.Mono, name: 'loud_right' }),
         {
           [GeneratorType.VelRange]: {
             range: { lo: 17, hi: 40 },
@@ -100,5 +102,83 @@ describe('sample lookup matrix generator', () => {
     assert.strictEqual(output.matrix[2][2]!.sampleKey, 'loud_right');
     assert.strictEqual(output.matrix[3][1], undefined);
     assert.strictEqual(output.matrix[3][2], undefined);
+  });
+});
+
+describe('suggested sampler index generator', () => {
+  it('asssigns sampler indices to all the zones', () => {
+    const topZone = createMockOutputZone(
+      {
+        id: 0,
+        velRange: { lo: 20, hi: 40 },
+        keyRange: { lo: 0, hi: 50 }
+      });
+    const bottomLeft = createMockOutputZone(
+      {
+        id: 1,
+        velRange: { lo: 0, hi: 19 },
+        keyRange: { lo: 0, hi: 50 }
+      });
+    const bottomMid = createMockOutputZone(
+      {
+        id: 2,
+        velRange: { lo: 0, hi: 19 },
+        keyRange: { lo: 25, hi: 50 }
+      });
+    const right = createMockOutputZone(
+      {
+        id: 3,
+        velRange: { lo: 0, hi: 40 },
+        keyRange: { lo: 51, hi: 60}
+      });
+    const matrix = [
+      [bottomLeft, topZone],
+      [bottomMid, topZone],
+      [right, right]
+    ];
+
+    generateSuggestedSamplerIndices(matrix);
+
+    assert.notEqual(topZone.suggestedSamplerIndex, undefined);
+    assert.notEqual(bottomLeft.suggestedSamplerIndex, undefined);
+    assert.notEqual(bottomMid.suggestedSamplerIndex, undefined);
+    assert.notEqual(right.suggestedSamplerIndex, undefined);
+
+  });
+  it('doesn\'t assign any zones with overlapping key ranges to the same sampler', () => {
+    const topZone = createMockOutputZone(
+      {
+        id: 0,
+        velRange: { lo: 20, hi: 40 },
+        keyRange: { lo: 0, hi: 50 }
+      });
+    const bottomLeft = createMockOutputZone(
+      {
+        id: 1,
+        velRange: { lo: 0, hi: 19 },
+        keyRange: { lo: 0, hi: 50 }
+      });
+    const bottomMid = createMockOutputZone(
+      {
+        id: 2,
+        velRange: { lo: 0, hi: 19 },
+        keyRange: { lo: 25, hi: 50 }
+      });
+    const right = createMockOutputZone(
+      {
+        id: 3,
+        velRange: { lo: 0, hi: 40 },
+        keyRange: { lo: 51, hi: 60}
+      });
+    const matrix = [
+      [bottomLeft, topZone],
+      [bottomMid, topZone],
+      [right, right]
+    ];
+
+    generateSuggestedSamplerIndices(matrix);
+
+    assert.notEqual(topZone.suggestedSamplerIndex, bottomLeft);
+    assert.notEqual(topZone.suggestedSamplerIndex, bottomMid);
   });
 });

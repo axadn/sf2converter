@@ -11,7 +11,7 @@ const buffer = fs.readFileSync(path.resolve('./dark chat_3.sf2'));
 const soundFont = new SoundFont2(buffer);
 //https://www.npmjs.com/package/sample-player
 
-type OutputZone = {
+export type OutputZone = {
     id: number,
     sampleKey: string,
     keyRange: Range,
@@ -113,7 +113,7 @@ function shouldAddToMixDown(newSample: SampleHeader, oldSample: SampleJob) {
         oldSample.mixDown.length === 1;
 }
 
-function generateSuggestedSamplerIndicesPerZone(matrix: SampleLookupMatrix) {
+export function generateSuggestedSamplerIndices(matrix: SampleLookupMatrix) {
     for (let i = 0; i < matrix.length; ++i) {
         let numEncountered = 0;
         let lastEncountered = null;
