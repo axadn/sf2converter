@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import bs from 'binary-search';
 import {
-    SoundFont2, Instrument, GeneratorType, Range, Sample,
-    SampleHeader, ZoneMap, Modulator, Generator, SampleType, Zone, InstrumentZone
+    SoundFont2, GeneratorType, Range, Sample, SF2Chunk,
+    SampleHeader, ZoneMap, Modulator, Generator, SampleType, InstrumentZone
 } from 'soundfont2';
+import { renderSample } from './sampleRenderer';
 
 // Do not specify any encoding type
 const buffer = fs.readFileSync(path.resolve('./dark chat_3.sf2'));
@@ -55,10 +56,34 @@ interface SampleJob {
     mixDown: Sample[];
 };
 
+export async function convertSf2(chunk: Uint8Array | SF2Chunk){
+    const soundFont = new SoundFont2(buffer);
+    const inputZones = soundFont.instruments.flatMap(i=>i.zones);
+    const {velocityRanges, noteRanges} = getRangeSlices(inputZones);
+    const {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(velocityRanges, noteRanges, zones);
+    generateSuggestedSamplerIndices(matrix);
+
+    const samples: Record<string,{header: SampleHeader, data: string}> = {};
+    for(const sampleKey in sampleJobs){
+        samples[sampleKey] = {
+            header: sampleJobs.get(sampleKey)!.header,
+            data: 'data:audio/mpeg;base64,'+ 
+                await renderSample(sampleJobs.get(sampleKey)!.mixDown)
+        };
+    }
+
+    return {
+        samples,
+        zoneMatrix: matrix, 
+        zones
+    };
+}
+
 /* velocityRages and keyRanges should be sorted in increasing order.*/
 export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: Range[],
-    zones: InstrumentZone[]): { matrix: SampleLookupMatrix, sampleJobs: Map<string, SampleJob> } {
+    zones: InstrumentZone[]): { matrix: SampleLookupMatrix, zones: OutputZone[], sampleJobs: Map<string, SampleJob> } {
     const matrix: SampleLookupMatrix = new Array(keyRanges.length);
+    const outputZones: OutputZone[] = [];
     for(let i = 0; i <keyRanges.length; ++i){
         matrix[i] = new Array(velocityRanges.length);
     }
@@ -98,6 +123,7 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
                 }
                 else if (!matrix[i][j]) {
                     matrix[i][j] = outputZone;
+                    outputZones.push(outputZone);
                     if (!sampleJobs.has(zone.sample.header.name)) {
                         sampleJobs.set(zone.sample.header.name,
                             { header: zone.sample.header, mixDown: [zone.sample] });
@@ -106,7 +132,7 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
             }
         }
     });
-    return { matrix, sampleJobs };
+    return { matrix, zones: outputZones, sampleJobs };
 }
 function shouldAddToMixDown(newSample: SampleHeader, oldSample: SampleJob) {
     return areRightAndLeftSample(oldSample.header, newSample) &&
@@ -148,7 +174,7 @@ function areRightAndLeftSample(sample1: SampleHeader, sample2: SampleHeader) {
         sample1.type === SampleType.Right && sample2.type === SampleType.Left;
 }
 
-function getVelocityRangeSlices(zones: InstrumentZone[]): { velocityRanges: Range[], noteRanges: Range[] } {
+function getRangeSlices(zones: InstrumentZone[]): { velocityRanges: Range[], noteRanges: Range[] } {
     // These are 'left' boundaries. The 'boundary line' sits between the number and the integer below it.
     const velocityBoundaries: Set<number> = new Set();
     const noteBoundaries: Set<number> = new Set();
