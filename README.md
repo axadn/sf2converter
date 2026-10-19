@@ -12,8 +12,6 @@ LAME must be installed and available on the PATH environment variable in order t
    1. Only one sample is allowed per zone. If a left and a right channel are 
      detected on the same zone they will be mixed down into a single sample. Otherwise, subsequent samples
      found in the same zone will be dropped in favor of the first sample.
-   2. Overlapping SF2 zones default to the first-defined sample to avoid blending short release/pop samples into the main note. Use `zoneCollisionPolicy: 'merge'` only when you explicitly want those collisions mixed together.
-  3. Explicit zones (key-ranges) will not work with the web-based samplers we are targeting.
-     Root notes will be used to define new zones. Support for explicit zones may be added eventually, as I move towards
-     extending them or implementing my own samplers without this restriction. 
+   2. Overlapping SF2 zones default to the first-defined sample to avoid blending short release/pop samples into the main note. Use `zoneCollisionPolicy: 'merge'` only when you explicitly want those collisions mixed together. Merged pitched samples are transposed to the root pitch of the sample closest to the target zone's key-range center; unpitched samples are not transposed.
+  3. The output represents zones using their key and velocity ranges. Some of the web-based samplers we are targeting may not support explicit key ranges; a custom sampler may be needed to honor them.
  
