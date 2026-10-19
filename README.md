@@ -8,10 +8,8 @@ Or worse, they force users to pick from remotely-hosted sample packs.
 ### Installation
 LAME must be installed and available on the PATH environment variable in order to render samples to MP3
 
-### Known restrictions/limitations 
-   1. Only one sample is allowed per zone. If a left and a right channel are 
-     detected on the same zone they will be mixed down into a single sample. Otherwise, subsequent samples
-     found in the same zone will be dropped in favor of the first sample.
-   2. Overlapping SF2 zones default to the first-defined sample to avoid blending short release/pop samples into the main note. Use `zoneCollisionPolicy: 'merge'` only when you explicitly want those collisions mixed together. Merged pitched samples are transposed to the root pitch of the sample closest to the target zone's key-range center; unpitched samples are not transposed.
-  3. The output represents zones using their key and velocity ranges. Some of the web-based samplers we are targeting may not support explicit key ranges; a custom sampler may be needed to honor them.
+### Known restrictions/limitations
+1. Each instrument zone references one sample. If that sample is a left or right stereo channel, its linked opposite channel is included in the rendered stereo sample. ROM sample types (`RomMono`, `RomLeft`, `RomRight`, and `RomLinked`) are not supported.
+2. Overlapping zones use the first zone by default. Set `zoneCollisionPolicy` to `'last'` to use the last zone, or `'merge'` to mix samples from colliding zones. In a merge, pitched samples are transposed to the root pitch closest to the target key-range center; unpitched samples are not transposed.
+3. Output zones retain their key and velocity ranges. The playback sampler must support explicit key ranges to honor them.
  
