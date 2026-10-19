@@ -22,6 +22,13 @@ export type OutputZone = {
     suggestedSamplerIndex?: number
 }
 
+export type OutputSample = {
+    id: string;
+    header: SampleHeader;
+    dataStart: number;
+    dataLength: number;
+};
+
 /* This matrix will aid in coming up with a schema of samplers to handle the different velocity layers,
  * as well as looking up which sample/sampler to route an incoming MIDI event to, 
  * given an arbitrarily irregular mapping. 
@@ -56,28 +63,46 @@ interface SampleJob {
     mixDown: Sample[];
 };
 
-export async function convertSf2(chunk: Uint8Array | SF2Chunk){
+export type InstrumentDefinition = {
+    samples: OutputSample[];
+    zoneMatrix: SampleLookupMatrix;
+    zones: OutputZone[];
+    velocityRanges: Range[];
+    noteRanges: Range[];
+};
+
+export async function convertSf2(chunk: Uint8Array | SF2Chunk) : Promise<{instrument: InstrumentDefinition, audioData: Buffer }> {
     const soundFont = new SoundFont2(buffer);
     const inputZones = soundFont.instruments.flatMap(i=>i.zones);
     const {velocityRanges, noteRanges} = getRangeSlices(inputZones);
-    const {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(velocityRanges, noteRanges, zones);
+    const {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(velocityRanges, noteRanges, inputZones);
     generateSuggestedSamplerIndices(matrix);
 
-    const samples: Record<string,{header: SampleHeader, data: string}> = {};
-    for(const sampleKey in sampleJobs){
-        samples[sampleKey] = {
-            header: sampleJobs.get(sampleKey)!.header,
-            data: 'data:audio/mpeg;base64,'+ 
-                await renderSample(sampleJobs.get(sampleKey)!.mixDown)
-        };
+    const samples: OutputSample[] = [];
+
+    let sampleStart = 0;
+    let combinedOutputBuffer = Buffer.alloc(0);
+    for (const [sampleKey, sampleJob] of sampleJobs) {
+        const renderedSample = await renderSample(sampleJob.mixDown);
+        samples.push({
+            id: sampleKey,
+            header: sampleJob.header,
+            dataStart: sampleStart,
+            dataLength: renderedSample.length
+        });
+        combinedOutputBuffer = Buffer.concat([combinedOutputBuffer, renderedSample]);
+        sampleStart += renderedSample.length;
     }
 
-    return {
+    const instrument = {
         samples,
-        zoneMatrix: matrix, 
-        zones
+        zoneMatrix: matrix,
+        zones,
+        velocityRanges,
+        noteRanges
     };
-}
+    return {instrument, audioData: combinedOutputBuffer};
+};
 
 /* velocityRages and keyRanges should be sorted in increasing order.*/
 export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: Range[],
