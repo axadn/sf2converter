@@ -4,6 +4,7 @@ import { GeneratorType, InstrumentZone, Range, SampleType } from "soundfont2";
 import { createMockSample } from "./helpers/mockSample";
 import { createMockInstrumentZone } from "./helpers/mockInstrumentZone";
 import { createMockOutputZone } from "./helpers/mockOutputZone";
+import { renderSample } from "../sampleRenderer";
 
 import * as assert from "node:assert";
 
@@ -86,7 +87,98 @@ describe('non overlapping range generator', function () {
 
 });
 
+describe('sample rendering', () => {
+  it('renders mono-only and single-channel samples without dropping them', async () => {
+    const mono = createMockSample({
+      name: 'mono-sample',
+      type: SampleType.Mono,
+      sampleRate: 44100,
+    }, new Int16Array(2048).fill(8000));
+
+    const left = createMockSample({
+      name: 'left-sample',
+      type: SampleType.Left,
+      sampleRate: 44100,
+    }, new Int16Array(1024).fill(12000));
+
+    const right = createMockSample({
+      name: 'right-sample',
+      type: SampleType.Right,
+      sampleRate: 44100,
+    }, new Int16Array(1024).fill(-12000));
+
+    const monoResult = await renderSample([mono], { bitrate: 128, quality: 5 });
+    const leftResult = await renderSample([left], { bitrate: 128, quality: 5 });
+    const rightResult = await renderSample([right], { bitrate: 128, quality: 5 });
+
+    assert.ok(Buffer.isBuffer(monoResult));
+    assert.ok(Buffer.isBuffer(leftResult));
+    assert.ok(Buffer.isBuffer(rightResult));
+    assert.ok(monoResult.length > 0);
+    assert.ok(leftResult.length > 0);
+    assert.ok(rightResult.length > 0);
+    for (const result of [monoResult, leftResult, rightResult]) {
+      assert.strictEqual(result[0], 0xff);
+      assert.strictEqual(result[1] & 0xe0, 0xe0);
+    }
+  });
+});
+
 describe('sample lookup matrix generator', () => {
+  it('prefers the first zone when overlapping samples collide', () => {
+    const mainSample = createMockSample({ name: 'main' });
+    const releaseSample = createMockSample({ name: 'release' });
+    const zones = [
+      createMockInstrumentZone({ lo: 104, hi: 106 }, mainSample, {
+        [GeneratorType.VelRange]: { range: { lo: 97, hi: 104 }, id: GeneratorType.VelRange }
+      }),
+      createMockInstrumentZone({ lo: 106, hi: 106 }, releaseSample, {
+        [GeneratorType.VelRange]: { range: { lo: 0, hi: 127 }, id: GeneratorType.VelRange }
+      })
+    ];
+    const velocityRanges = [
+      { lo: 0, hi: 96 },
+      { lo: 97, hi: 104 },
+      { lo: 105, hi: 127 }
+    ];
+    const keyRanges = [
+      { lo: 0, hi: 103 },
+      { lo: 104, hi: 106 },
+      { lo: 107, hi: 127 }
+    ];
+
+    const result = assignSamplesToMatrixCells(velocityRanges, keyRanges, zones, 'first');
+
+    assert.strictEqual(result.matrix[1][1]?.sampleKey, 'main');
+    assert.deepStrictEqual(result.sampleJobs.get('main')?.mixDown, [mainSample]);
+    assert.deepStrictEqual(result.zones.map(zone => zone.sampleKey).sort(), ['main', 'release']);
+  });
+
+  it('applies the configured policy when zones collide', () => {
+    const firstSample = createMockSample({ name: 'first' });
+    const lastSample = createMockSample({ name: 'last' });
+    const zones = [
+      createMockInstrumentZone({ lo: 0, hi: 127 }, firstSample),
+      createMockInstrumentZone({ lo: 0, hi: 127 }, lastSample)
+    ];
+    const velocityRanges = [{ lo: 0, hi: 127 }];
+    const keyRanges = [{ lo: 0, hi: 127 }];
+
+    const firstResult = assignSamplesToMatrixCells(velocityRanges, keyRanges, zones, 'first');
+    const lastResult = assignSamplesToMatrixCells(velocityRanges, keyRanges, zones, 'last');
+    const mergeResult = assignSamplesToMatrixCells(velocityRanges, keyRanges, zones, 'merge');
+
+    assert.strictEqual(firstResult.matrix[0][0]?.sampleKey, 'first');
+    assert.deepStrictEqual(Array.from(firstResult.sampleJobs.keys()), ['first']);
+    assert.deepStrictEqual(firstResult.zones.map(zone => zone.sampleKey), ['first']);
+    assert.strictEqual(lastResult.matrix[0][0]?.sampleKey, 'last');
+    assert.deepStrictEqual(Array.from(lastResult.sampleJobs.keys()), ['last']);
+    assert.deepStrictEqual(lastResult.zones.map(zone => zone.sampleKey), ['last']);
+    assert.deepStrictEqual(Array.from(mergeResult.sampleJobs.keys()), ['first']);
+    assert.deepStrictEqual(mergeResult.zones.map(zone => zone.sampleKey), ['first']);
+    assert.deepStrictEqual(mergeResult.sampleJobs.get('first')?.mixDown, [firstSample, lastSample]);
+  });
+
   it('should assign samples to the right cells', () => {
     const zones: InstrumentZone[] = [
       createMockInstrumentZone({ lo: 0, hi: 40 },

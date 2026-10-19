@@ -1,6 +1,3 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import bs from 'binary-search';
 import {
     SoundFont2, GeneratorType, Range, Sample, SF2Chunk,
     SampleHeader, ZoneMap, Modulator, Generator, SampleType, InstrumentZone
@@ -75,6 +72,19 @@ export function sampleMatrixAt(
         : matrix[keyIndex]?.[velocityIndex];
 }
 
+function findRangeBucket(ranges: Range[], value: number): number {
+    const exactIndex = ranges.findIndex(range => range.lo <= value && value <= range.hi);
+    if (exactIndex >= 0) {
+        return exactIndex;
+    }
+
+    const nextIndex = ranges.findIndex(range => range.lo > value);
+    if (nextIndex === -1) {
+        return ranges.length - 1;
+    }
+    return nextIndex === 0 ? 0 : nextIndex - 1;
+}
+
 export type InstrumentDefinition = {
     samples: OutputSample[];
     zoneMatrix: SampleLookupMatrix;
@@ -83,12 +93,15 @@ export type InstrumentDefinition = {
     noteRanges: Range[];
 };
 
+export type ZoneCollisionPolicy = 'merge' | 'first' | 'last';
+
 export type ConvertSf2Options = {
     simplifyType?: 'none' | {
         keyResolution: number;
         velocityResolution: number;
     };
     audio?: AudioOptions;
+    zoneCollisionPolicy?: ZoneCollisionPolicy;
 };
 
 export async function convertSf2(
@@ -97,8 +110,14 @@ export async function convertSf2(
 ): Promise<{ instrument: InstrumentDefinition, audioData: Buffer }> {
     const soundFont = new SoundFont2(chunk);
     const inputZones = soundFont.instruments.flatMap(i=>i.zones);
+    const zoneCollisionPolicy = options.zoneCollisionPolicy ?? 'first';
     let {velocityRanges, noteRanges} = getRangeSlices(inputZones);
-    let {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(velocityRanges, noteRanges, inputZones);
+    let {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(
+        velocityRanges,
+        noteRanges,
+        inputZones,
+        zoneCollisionPolicy
+    );
     if (options.simplifyType && options.simplifyType !== 'none') {
         const toKeyRanges = createResolutionRanges(options.simplifyType.keyResolution);
         const toVelocityRanges = createResolutionRanges(options.simplifyType.velocityResolution);
@@ -155,8 +174,12 @@ function createResolutionRanges(resolution: number): Range[] {
 }
 
 /* velocityRages and keyRanges should be sorted in increasing order.*/
-export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: Range[],
-    zones: InstrumentZone[]): { matrix: SampleLookupMatrix, zones: OutputZone[], sampleJobs: Map<string, SampleJob> } {
+export function assignSamplesToMatrixCells(
+    velocityRanges: Range[],
+    keyRanges: Range[],
+    zones: InstrumentZone[],
+    zoneCollisionPolicy: ZoneCollisionPolicy = 'merge'
+): { matrix: SampleLookupMatrix, zones: OutputZone[], sampleJobs: Map<string, SampleJob> } {
     const matrix: SampleLookupMatrix = new Array(keyRanges.length);
     const outputZones: OutputZone[] = [];
     for(let i = 0; i <keyRanges.length; ++i){
@@ -170,14 +193,14 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
         }
         const velRange = zone.generators[GeneratorType.VelRange]?.range ?? { lo: 0, hi: 127 };
         const keyRange = zone.generators[GeneratorType.KeyRange]?.range ?? { lo: 0, hi: 127 };
-        const velBucket = bs(velocityRanges, velRange.lo, (a: Range, b: number) => a.lo - b);
-        const keyBucket = bs(keyRanges, keyRange.lo, (a: Range, b: number) => a.lo - b);
+        const velBucket = findRangeBucket(velocityRanges, velRange.lo);
+        const keyBucket = findRangeBucket(keyRanges, keyRange.lo);
         let numVelocityBuckets = 1;
-        while (velocityRanges[velBucket + numVelocityBuckets - 1].hi < velRange.hi) {
+        while (velocityRanges[velBucket + numVelocityBuckets - 1]?.hi < velRange.hi) {
             ++numVelocityBuckets;
         }
         let numKeyBuckets = 1;
-        while (keyRanges[keyBucket + numKeyBuckets - 1].hi < keyRange.hi) {
+        while (keyRanges[keyBucket + numKeyBuckets - 1]?.hi < keyRange.hi) {
             ++numKeyBuckets;
         }
 
@@ -191,14 +214,25 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
         };
         for (let i = keyBucket; i < keyBucket + numKeyBuckets; ++i) {
             for (let j = velBucket; j < velBucket + numVelocityBuckets; ++j) {
-                if (matrix[i][j] && shouldAddToMixDown(zone.sample.header,
-                    sampleJobs.get(matrix[i][j]!.sampleKey)!)
-                ) {
-                    sampleJobs.get(matrix[i][j]!.sampleKey)!.mixDown.push(zone.sample);
-                }
-                else if (!matrix[i][j]) {
+                const existingZone = matrix[i][j];
+                if (existingZone) {
+                    if (zoneCollisionPolicy === 'first') {
+                        continue;
+                    }
+                    if (zoneCollisionPolicy === 'last') {
+                        matrix[i][j] = outputZone;
+                        sampleJobs.set(zone.sample.header.name, {
+                            header: zone.sample.header,
+                            mixDown: [zone.sample]
+                        });
+                    } else {
+                        const sampleJob = sampleJobs.get(existingZone.sampleKey)!;
+                        if (!sampleJob.mixDown.includes(zone.sample)) {
+                            sampleJob.mixDown.push(zone.sample);
+                        }
+                    }
+                } else {
                     matrix[i][j] = outputZone;
-                    outputZones.push(outputZone);
                     if (!sampleJobs.has(zone.sample.header.name)) {
                         sampleJobs.set(zone.sample.header.name,
                             { header: zone.sample.header, mixDown: [zone.sample] });
@@ -207,6 +241,18 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
             }
         }
     });
+
+    const selectedZones = new Set(matrix.flatMap(row => row.filter(
+        (zone): zone is OutputZone => zone !== undefined
+    )));
+    outputZones.push(...selectedZones);
+    const selectedSampleKeys = new Set(outputZones.map(zone => zone.sampleKey));
+    for (const sampleKey of sampleJobs.keys()) {
+        if (!selectedSampleKeys.has(sampleKey)) {
+            sampleJobs.delete(sampleKey);
+        }
+    }
+
     return { matrix, zones: outputZones, sampleJobs };
 }
 
@@ -260,11 +306,6 @@ export function ResampleZones(
     return { matrix: resampledMatrix, zones: resampledZones, sampleJobs: resampledSampleJobs };
 }
 
-function shouldAddToMixDown(newSample: SampleHeader, oldSample: SampleJob) {
-    return areRightAndLeftSample(oldSample.header, newSample) &&
-        oldSample.mixDown.length === 1;
-}
-
 export function generateSuggestedSamplerIndices(matrix: SampleLookupMatrix) {
     for (let i = 0; i < matrix.length; ++i) {
         let numEncountered = 0;
@@ -293,11 +334,6 @@ function isCompatibleSampleType(sample: Sample) {
         default:
             return false;
     }
-}
-
-function areRightAndLeftSample(sample1: SampleHeader, sample2: SampleHeader) {
-    return sample1.type === SampleType.Left && sample2.type === SampleType.Right ||
-        sample1.type === SampleType.Right && sample2.type === SampleType.Left;
 }
 
 export function getRangeSlices(zones: InstrumentZone[]): { velocityRanges: Range[], noteRanges: Range[] } {
@@ -334,17 +370,3 @@ export function generateNonOverlappingRanges(boundaryValues: Set<number>) {
     }
     return processedRanges;
 }
-
-/**
-// Do not specify any encoding type
-const buffer = fs.readFileSync(path.resolve('./salamander.sf2'));
-const soundFont = new SoundFont2(buffer);
-console.log(`SoundFont has ${soundFont.instruments.length} instruments.`);
-
-//https://www.npmjs.com/package/sample-player
-convertSf2(buffer).then(result => {
-    const {instrument, audioData} = result;
-    fs.writeFileSync(path.resolve('./output.mp3'), audioData);
-    fs.writeFileSync(path.resolve('./output.json'), JSON.stringify(instrument, null, 2));
-});
-**/

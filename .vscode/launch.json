@@ -20,6 +20,19 @@
         {
             "type": "node",
             "request": "launch",
+            "name": "Convert SoundFont demo",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "program": "${workspaceFolder}/out/demo.js",
+            "preLaunchTask": "tsc: build - tsconfig.json",
+            "outFiles": [
+                "${workspaceFolder}/out/**/*.js"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
             "name": "Test",
             "skipFiles": [
                 "<node_internals>/**"
