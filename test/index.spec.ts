@@ -1,5 +1,5 @@
 import { describe, it, test } from "node:test";
-import { generateNonOverlappingRanges, getRangeSlices, assignSamplesToMatrixCells, generateSuggestedSamplerIndices } from "../index";
+import { generateNonOverlappingRanges, getRangeSlices, assignSamplesToMatrixCells, generateSuggestedSamplerIndices, SampleJob, sampleMatrixAt, ResampleZones } from "../index";
 import { GeneratorType, InstrumentZone, Range, SampleType } from "soundfont2";
 import { createMockSample } from "./helpers/mockSample";
 import { createMockInstrumentZone } from "./helpers/mockInstrumentZone";
@@ -156,6 +156,113 @@ describe('sample lookup matrix generator', () => {
     assert.strictEqual(output.matrix[2][2]!.sampleKey, 'loud_right');
     assert.strictEqual(output.matrix[3][1], undefined);
     assert.strictEqual(output.matrix[3][2], undefined);
+  });
+});
+
+describe('zone resampler', () => {
+  it('finds a zone in the matrix by key and velocity', () => {
+    const first = createMockOutputZone({
+      sampleKey: 'first',
+      keyRange: { lo: 0, hi: 39 },
+      velRange: { lo: 0, hi: 63 }
+    });
+    const matching = createMockOutputZone({
+      sampleKey: 'matching',
+      keyRange: { lo: 40, hi: 127 },
+      velRange: { lo: 64, hi: 127 }
+    });
+    const matrix = [[first, undefined], [undefined, matching]];
+    const keyRanges = [{ lo: 0, hi: 39 }, { lo: 40, hi: 127 }];
+    const velocityRanges = [{ lo: 0, hi: 63 }, { lo: 64, hi: 127 }];
+
+    assert.strictEqual(sampleMatrixAt(matrix, keyRanges, velocityRanges, 60, 100), matching);
+    assert.strictEqual(sampleMatrixAt(matrix, keyRanges, velocityRanges, 60, 20), undefined);
+  });
+
+  it('samples source zones at each target cell center and removes unused sample jobs', () => {
+    const lowerLeft = createMockOutputZone({
+      id: 0,
+      sampleKey: 'lower-left',
+      keyRange: { lo: 0, hi: 40 },
+      velRange: { lo: 0, hi: 63 }
+    });
+    const upperRight = createMockOutputZone({
+      id: 1,
+      sampleKey: 'upper-right',
+      keyRange: { lo: 41, hi: 127 },
+      velRange: { lo: 64, hi: 127 }
+    });
+    const unused = createMockOutputZone({
+      id: 2,
+      sampleKey: 'unused',
+      keyRange: { lo: 0, hi: 63 },
+      velRange: { lo: 64, hi: 127 }
+    });
+    const matrix = [
+      [lowerLeft, undefined],
+      [undefined, upperRight]
+    ];
+    const sampleJobs = new Map<string, SampleJob>(
+      [lowerLeft, upperRight, unused].map(zone => {
+        const sample = createMockSample({ name: zone.sampleKey });
+        return [zone.sampleKey, { header: sample.header, mixDown: [sample] }];
+      })
+    );
+
+    const fromKeyRanges = [{ lo: 0, hi: 40 }, { lo: 41, hi: 127 }];
+    const fromVelocityRanges = [{ lo: 0, hi: 63 }, { lo: 64, hi: 127 }];
+    const toKeyRanges = [{ lo: 0, hi: 63 }, { lo: 64, hi: 127 }];
+    const toVelocityRanges = [{ lo: 0, hi: 63 }, { lo: 64, hi: 127 }];
+    const result = ResampleZones(
+      matrix,
+      fromVelocityRanges,
+      fromKeyRanges,
+      toVelocityRanges,
+      toKeyRanges,
+      sampleJobs
+    );
+
+    assert.deepStrictEqual(result.matrix.map(row => row.map(zone => zone?.sampleKey)), [
+      ['lower-left', undefined],
+      [undefined, 'upper-right']
+    ]);
+    assert.deepStrictEqual(result.matrix[0][0]!.keyRange, { lo: 0, hi: 63 });
+    assert.deepStrictEqual(result.matrix[1][1]!.velRange, { lo: 64, hi: 127 });
+    assert.deepStrictEqual(result.zones.map(zone => zone.sampleKey), ['lower-left', 'upper-right']);
+    assert.deepStrictEqual(Array.from(result.sampleJobs.keys()), ['lower-left', 'upper-right']);
+    assert.strictEqual(matrix[0][0], lowerLeft);
+  });
+
+  it('uses the supplied target range dimensions and boundaries', () => {
+    const source = createMockOutputZone({
+      id: 0,
+      sampleKey: 'source',
+      keyRange: { lo: 0, hi: 127 },
+      velRange: { lo: 0, hi: 127 }
+    });
+    const sample = createMockSample({ name: 'source' });
+    const sampleJobs = new Map<string, SampleJob>([
+      ['source', { header: sample.header, mixDown: [sample] }]
+    ]);
+    const fromKeyRanges = [{ lo: 0, hi: 127 }];
+    const fromVelocityRanges = [{ lo: 0, hi: 127 }];
+    const toKeyRanges = [{ lo: 10, hi: 19 }, { lo: 20, hi: 39 }];
+    const toVelocityRanges = [{ lo: 40, hi: 49 }];
+
+    const result = ResampleZones(
+      [[source]],
+      fromVelocityRanges,
+      fromKeyRanges,
+      toVelocityRanges,
+      toKeyRanges,
+      sampleJobs
+    );
+
+    assert.strictEqual(result.matrix.length, 2);
+    assert.strictEqual(result.matrix[0].length, 1);
+    assert.deepStrictEqual(result.matrix[0][0]!.keyRange, toKeyRanges[0]);
+    assert.deepStrictEqual(result.matrix[1][0]!.keyRange, toKeyRanges[1]);
+    assert.deepStrictEqual(result.matrix[0][0]!.velRange, toVelocityRanges[0]);
   });
 });
 

@@ -6,6 +6,7 @@ import {
     SampleHeader, ZoneMap, Modulator, Generator, SampleType, InstrumentZone
 } from 'soundfont2';
 import { renderSample } from './sampleRenderer';
+import type { AudioOptions } from './sampleRenderer';
 
 export type OutputZone = {
     id: number,
@@ -52,11 +53,27 @@ export type OutputSample = {
  *          0 |_______|________|_________|  - Sampler1
  *             0   10   20   30   40   50 
  */
-type SampleLookupMatrix = (OutputZone|undefined)[][];
-interface SampleJob {
+export type SampleLookupMatrix = (OutputZone|undefined)[][];
+export interface SampleJob {
     header: SampleHeader;
     mixDown: Sample[];
 };
+
+export function sampleMatrixAt(
+    matrix: SampleLookupMatrix,
+    keyRanges: Range[],
+    velocityRanges: Range[],
+    keyValue: number,
+    velocityValue: number
+): OutputZone | undefined {
+    const keyIndex = keyRanges.findIndex(range => range.lo <= keyValue && keyValue <= range.hi);
+    const velocityIndex = velocityRanges.findIndex(
+        range => range.lo <= velocityValue && velocityValue <= range.hi
+    );
+    return keyIndex < 0 || velocityIndex < 0
+        ? undefined
+        : matrix[keyIndex]?.[velocityIndex];
+}
 
 export type InstrumentDefinition = {
     samples: OutputSample[];
@@ -66,19 +83,45 @@ export type InstrumentDefinition = {
     noteRanges: Range[];
 };
 
-export async function convertSf2(chunk: Uint8Array | SF2Chunk) : Promise<{instrument: InstrumentDefinition, audioData: Buffer }> {
+export type ConvertSf2Options = {
+    simplifyType?: 'none' | {
+        keyResolution: number;
+        velocityResolution: number;
+    };
+    audio?: AudioOptions;
+};
+
+export async function convertSf2(
+    chunk: Uint8Array | SF2Chunk,
+    options: ConvertSf2Options = {}
+): Promise<{ instrument: InstrumentDefinition, audioData: Buffer }> {
     const soundFont = new SoundFont2(chunk);
     const inputZones = soundFont.instruments.flatMap(i=>i.zones);
-    const {velocityRanges, noteRanges} = getRangeSlices(inputZones);
-    const {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(velocityRanges, noteRanges, inputZones);
+    let {velocityRanges, noteRanges} = getRangeSlices(inputZones);
+    let {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(velocityRanges, noteRanges, inputZones);
+    if (options.simplifyType && options.simplifyType !== 'none') {
+        const toKeyRanges = createResolutionRanges(options.simplifyType.keyResolution);
+        const toVelocityRanges = createResolutionRanges(options.simplifyType.velocityResolution);
+        const resampled = ResampleZones(
+            matrix,
+            velocityRanges,
+            noteRanges,
+            toVelocityRanges,
+            toKeyRanges,
+            sampleJobs
+        );
+        ({ matrix, zones, sampleJobs } = resampled);
+        noteRanges = toKeyRanges;
+        velocityRanges = toVelocityRanges;
+    }
     generateSuggestedSamplerIndices(matrix);
 
     const samples: OutputSample[] = [];
 
     let sampleStart = 0;
     let combinedOutputBuffer = Buffer.alloc(0);
-    for (const [sampleKey, sampleJob] of Array.from(sampleJobs.entries()).slice(0,1)) {
-        const renderedSample = await renderSample(sampleJob.mixDown);
+    for (const [sampleKey, sampleJob] of sampleJobs) {
+        const renderedSample = await renderSample(sampleJob.mixDown, options.audio);
         samples.push({
             id: sampleKey,
             header: sampleJob.header,
@@ -98,6 +141,18 @@ export async function convertSf2(chunk: Uint8Array | SF2Chunk) : Promise<{instru
     };
     return {instrument, audioData: combinedOutputBuffer};
 };
+
+function createResolutionRanges(resolution: number): Range[] {
+    if (!Number.isInteger(resolution) || resolution <= 0) {
+        throw new RangeError('Key and velocity resolutions must be positive integers.');
+    }
+
+    const ranges: Range[] = [];
+    for (let lo = 0; lo <= 127; lo += resolution) {
+        ranges.push({ lo, hi: Math.min(lo + resolution - 1, 127) });
+    }
+    return ranges;
+}
 
 /* velocityRages and keyRanges should be sorted in increasing order.*/
 export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: Range[],
@@ -154,6 +209,57 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
     });
     return { matrix, zones: outputZones, sampleJobs };
 }
+
+export function ResampleZones(
+    fromMatrix: SampleLookupMatrix,
+    fromVelocityRanges: Range[],
+    fromKeyRanges: Range[],
+    toVelocityRanges: Range[],
+    toKeyRanges: Range[],
+    sampleJobs: Map<string, SampleJob>
+): { matrix: SampleLookupMatrix, zones: OutputZone[], sampleJobs: Map<string, SampleJob> } {
+    const resampledZones: OutputZone[] = [];
+    const resampledMatrix: SampleLookupMatrix = [];
+
+    for (const keyRange of toKeyRanges) {
+        const row: (OutputZone | undefined)[] = [];
+
+        for (const velRange of toVelocityRanges) {
+            const keyCenter = Math.floor((keyRange.lo + keyRange.hi) / 2);
+            const velocityCenter = Math.floor((velRange.lo + velRange.hi) / 2);
+            const sourceZone = sampleMatrixAt(
+                fromMatrix,
+                fromKeyRanges,
+                fromVelocityRanges,
+                keyCenter,
+                velocityCenter
+            );
+
+            if (!sourceZone) {
+                row.push(undefined);
+                continue;
+            }
+
+            const simplifiedZone: OutputZone = {
+                ...sourceZone,
+                id: resampledZones.length,
+                keyRange: { ...keyRange },
+                velRange: { ...velRange }
+            };
+            resampledZones.push(simplifiedZone);
+            row.push(simplifiedZone);
+        }
+        resampledMatrix.push(row);
+    }
+
+    const usedSampleKeys = new Set(resampledZones.map(zone => zone.sampleKey));
+    const resampledSampleJobs = new Map(
+        Array.from(sampleJobs).filter(([sampleKey]) => usedSampleKeys.has(sampleKey))
+    );
+
+    return { matrix: resampledMatrix, zones: resampledZones, sampleJobs: resampledSampleJobs };
+}
+
 function shouldAddToMixDown(newSample: SampleHeader, oldSample: SampleJob) {
     return areRightAndLeftSample(oldSample.header, newSample) &&
         oldSample.mixDown.length === 1;
@@ -230,7 +336,6 @@ export function generateNonOverlappingRanges(boundaryValues: Set<number>) {
 }
 
 /**
-
 // Do not specify any encoding type
 const buffer = fs.readFileSync(path.resolve('./salamander.sf2'));
 const soundFont = new SoundFont2(buffer);
@@ -242,5 +347,4 @@ convertSf2(buffer).then(result => {
     fs.writeFileSync(path.resolve('./output.mp3'), audioData);
     fs.writeFileSync(path.resolve('./output.json'), JSON.stringify(instrument, null, 2));
 });
-
 **/
