@@ -1,11 +1,65 @@
 import { describe, it, test } from "node:test";
-import { generateNonOverlappingRanges, assignSamplesToMatrixCells, generateSuggestedSamplerIndices } from "../index";
+import { generateNonOverlappingRanges, getRangeSlices, assignSamplesToMatrixCells, generateSuggestedSamplerIndices } from "../index";
 import { GeneratorType, InstrumentZone, Range, SampleType } from "soundfont2";
 import { createMockSample } from "./helpers/mockSample";
 import { createMockInstrumentZone } from "./helpers/mockInstrumentZone";
 import { createMockOutputZone } from "./helpers/mockOutputZone";
 
 import * as assert from "node:assert";
+
+describe('range slice generator', () => {
+  it('creates velocity and note slices from zone boundaries', () => {
+    const zones: InstrumentZone[] = [
+      createMockInstrumentZone(
+        { lo: 10, hi: 20 },
+        createMockSample({}),
+        {
+          [GeneratorType.VelRange]: {
+            range: { lo: 5, hi: 10 },
+            id: GeneratorType.VelRange
+          }
+        }
+      ),
+      createMockInstrumentZone(
+        { lo: 30, hi: 40 },
+        createMockSample({}),
+        {
+          [GeneratorType.VelRange]: {
+            range: { lo: 20, hi: 30 },
+            id: GeneratorType.VelRange
+          }
+        }
+      )
+    ];
+
+    const ranges = getRangeSlices(zones);
+
+    assert.deepStrictEqual(ranges.velocityRanges, [
+      { lo: 5, hi: 10 },
+      { lo: 11, hi: 19 },
+      { lo: 20, hi: 30 }
+    ]);
+    assert.deepStrictEqual(ranges.noteRanges, [
+      { lo: 10, hi: 20 },
+      { lo: 21, hi: 29 },
+      { lo: 30, hi: 40 }
+    ]);
+  });
+
+  it('defaults missing key and velocity ranges to the full MIDI range', () => {
+    const zone = createMockInstrumentZone(
+      { lo: 0, hi: 127 },
+      createMockSample({})
+    );
+    delete zone.generators[GeneratorType.KeyRange];
+
+    const ranges = getRangeSlices([zone]);
+
+    assert.deepStrictEqual(ranges.velocityRanges, [{ lo: 0, hi: 127 }]);
+    assert.deepStrictEqual(ranges.noteRanges, [{ lo: 0, hi: 127 }]);
+  });
+});
+
 describe('non overlapping range generator', function () {
   it('should generate correct non-overlapping ranges', function () {
     const testValues = new Set<number>(

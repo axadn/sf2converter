@@ -7,11 +7,6 @@ import {
 } from 'soundfont2';
 import { renderSample } from './sampleRenderer';
 
-// Do not specify any encoding type
-const buffer = fs.readFileSync(path.resolve('./dark chat_3.sf2'));
-const soundFont = new SoundFont2(buffer);
-//https://www.npmjs.com/package/sample-player
-
 export type OutputZone = {
     id: number,
     sampleKey: string,
@@ -72,7 +67,7 @@ export type InstrumentDefinition = {
 };
 
 export async function convertSf2(chunk: Uint8Array | SF2Chunk) : Promise<{instrument: InstrumentDefinition, audioData: Buffer }> {
-    const soundFont = new SoundFont2(buffer);
+    const soundFont = new SoundFont2(chunk);
     const inputZones = soundFont.instruments.flatMap(i=>i.zones);
     const {velocityRanges, noteRanges} = getRangeSlices(inputZones);
     const {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(velocityRanges, noteRanges, inputZones);
@@ -82,7 +77,7 @@ export async function convertSf2(chunk: Uint8Array | SF2Chunk) : Promise<{instru
 
     let sampleStart = 0;
     let combinedOutputBuffer = Buffer.alloc(0);
-    for (const [sampleKey, sampleJob] of sampleJobs) {
+    for (const [sampleKey, sampleJob] of Array.from(sampleJobs.entries()).slice(0,1)) {
         const renderedSample = await renderSample(sampleJob.mixDown);
         samples.push({
             id: sampleKey,
@@ -118,8 +113,8 @@ export function assignSamplesToMatrixCells(velocityRanges: Range[], keyRanges: R
         if (!isCompatibleSampleType(zone.sample)) {
             return;
         }
-        const velRange = zone.generators[GeneratorType.VelRange]!.range!;
-        const keyRange = zone.generators[GeneratorType.KeyRange]!.range!;
+        const velRange = zone.generators[GeneratorType.VelRange]?.range ?? { lo: 0, hi: 127 };
+        const keyRange = zone.generators[GeneratorType.KeyRange]?.range ?? { lo: 0, hi: 127 };
         const velBucket = bs(velocityRanges, velRange.lo, (a: Range, b: number) => a.lo - b);
         const keyBucket = bs(keyRanges, keyRange.lo, (a: Range, b: number) => a.lo - b);
         let numVelocityBuckets = 1;
@@ -199,20 +194,21 @@ function areRightAndLeftSample(sample1: SampleHeader, sample2: SampleHeader) {
         sample1.type === SampleType.Right && sample2.type === SampleType.Left;
 }
 
-function getRangeSlices(zones: InstrumentZone[]): { velocityRanges: Range[], noteRanges: Range[] } {
+export function getRangeSlices(zones: InstrumentZone[]): { velocityRanges: Range[], noteRanges: Range[] } {
     // These are 'left' boundaries. The 'boundary line' sits between the number and the integer below it.
     const velocityBoundaries: Set<number> = new Set();
     const noteBoundaries: Set<number> = new Set();
     let minNoteValue = Number.MAX_SAFE_INTEGER;
-    let maxNoteValue = Number.MAX_SAFE_INTEGER;
+    let maxNoteValue = Number.MIN_SAFE_INTEGER;
     zones.forEach(z => {
-        velocityBoundaries.add(z.generators[GeneratorType.VelRange]!.range!.lo);
-        velocityBoundaries.add(z.generators[GeneratorType.VelRange]!.range!.hi + 1);
+        velocityBoundaries.add(z.generators[GeneratorType.VelRange]?.range?.lo ?? 0);
+        velocityBoundaries.add((z.generators[GeneratorType.VelRange]?.range?.hi ?? 127) + 1);
 
         noteBoundaries.add(
-            z.generators[GeneratorType.OverridingRootKey]?.value ?? z.sample.header.originalPitch);
-        minNoteValue = Math.min(minNoteValue, z.generators[GeneratorType.KeyRange]!.range!.lo);
-        maxNoteValue = Math.max(maxNoteValue, z.generators[GeneratorType.KeyRange]!.range!.hi + 1);
+            z.generators[GeneratorType.KeyRange]?.range?.lo ?? 0);
+        noteBoundaries.add((z.generators[GeneratorType.KeyRange]?.range?.hi ?? 127) + 1);
+        minNoteValue = Math.min(minNoteValue, z.generators[GeneratorType.KeyRange]?.range?.lo ?? 0);
+        maxNoteValue = Math.max(maxNoteValue, (z.generators[GeneratorType.KeyRange]?.range?.hi ?? 127) + 1);
     });
 
     noteBoundaries.add(minNoteValue);
@@ -232,3 +228,19 @@ export function generateNonOverlappingRanges(boundaryValues: Set<number>) {
     }
     return processedRanges;
 }
+
+/**
+
+// Do not specify any encoding type
+const buffer = fs.readFileSync(path.resolve('./salamander.sf2'));
+const soundFont = new SoundFont2(buffer);
+console.log(`SoundFont has ${soundFont.instruments.length} instruments.`);
+
+//https://www.npmjs.com/package/sample-player
+convertSf2(buffer).then(result => {
+    const {instrument, audioData} = result;
+    fs.writeFileSync(path.resolve('./output.mp3'), audioData);
+    fs.writeFileSync(path.resolve('./output.json'), JSON.stringify(instrument, null, 2));
+});
+
+**/

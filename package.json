@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "tsc && node --test ./out/test/index.spec.js",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "build": "tsc"
   },
   "author": "",
   "license": "ISC",
