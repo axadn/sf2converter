@@ -118,7 +118,8 @@ export async function convertSf2(
         velocityRanges,
         noteRanges,
         inputZones,
-        zoneCollisionPolicy
+        zoneCollisionPolicy,
+        soundFont.samples
     );
     if (options.simplifyType && options.simplifyType !== 'none') {
         const toKeyRanges = createResolutionRanges(options.simplifyType.keyResolution);
@@ -180,7 +181,8 @@ export function assignSamplesToMatrixCells(
     velocityRanges: Range[],
     keyRanges: Range[],
     zones: InstrumentZone[],
-    zoneCollisionPolicy: ZoneCollisionPolicy = 'merge'
+    zoneCollisionPolicy: ZoneCollisionPolicy = 'merge',
+    soundFontSamples: Sample[] = []
 ): { matrix: SampleLookupMatrix, zones: OutputZone[], sampleJobs: Map<string, SampleJob> } {
     const matrix: SampleLookupMatrix = new Array(keyRanges.length);
     const outputZones: OutputZone[] = [];
@@ -214,6 +216,8 @@ export function assignSamplesToMatrixCells(
             modulators: zone.modulators,
             generators: zone.generators
         };
+        const linkedSample = getLinkedSample(zone.sample, soundFontSamples);
+        const zoneSamples = linkedSample ? [zone.sample, linkedSample] : [zone.sample];
         for (let i = keyBucket; i < keyBucket + numKeyBuckets; ++i) {
             for (let j = velBucket; j < velBucket + numVelocityBuckets; ++j) {
                 const existingZone = matrix[i][j];
@@ -227,19 +231,21 @@ export function assignSamplesToMatrixCells(
                             header: zone.sample.header,
                             keyRange,
                             velRange,
-                            mixDown: [zone.sample]
+                            mixDown: zoneSamples
                         });
                     } else {
                         const sampleJob = sampleJobs.get(existingZone.sampleKey)!;
-                        if (!sampleJob.mixDown.includes(zone.sample)) {
-                            sampleJob.mixDown.push(zone.sample);
+                        for (const sample of zoneSamples) {
+                            if (!sampleJob.mixDown.includes(sample)) {
+                                sampleJob.mixDown.push(sample);
+                            }
                         }
                     }
                 } else {
                     matrix[i][j] = outputZone;
                     if (!sampleJobs.has(zone.sample.header.name)) {
                         sampleJobs.set(zone.sample.header.name,
-                            { header: zone.sample.header, keyRange, velRange, mixDown: [zone.sample] });
+                            { header: zone.sample.header, keyRange, velRange, mixDown: zoneSamples });
                     }
                 }
             }
@@ -258,6 +264,20 @@ export function assignSamplesToMatrixCells(
     }
 
     return { matrix, zones: outputZones, sampleJobs };
+}
+
+function getLinkedSample(sample: Sample, soundFontSamples: Sample[]): Sample | undefined {
+    const linkedType = sample.header.type === SampleType.Left
+        ? SampleType.Right
+        : sample.header.type === SampleType.Right
+            ? SampleType.Left
+            : undefined;
+    if (linkedType === undefined) {
+        return undefined;
+    }
+
+    const linkedSample = soundFontSamples[sample.header.link];
+    return linkedSample?.header.type === linkedType ? linkedSample : undefined;
 }
 
 export function ResampleZones(

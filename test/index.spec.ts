@@ -214,6 +214,37 @@ describe('sample lookup matrix generator', () => {
     assert.deepStrictEqual(mergeResult.sampleJobs.get('first')?.velRange, { lo: 0, hi: 127 });
   });
 
+  it('adds linked stereo samples to the winning sample job for each collision policy', () => {
+    const left = createMockSample({
+      name: 'stereo-left',
+      type: SampleType.Left,
+      link: 1
+    });
+    const right = createMockSample({
+      name: 'stereo-right',
+      type: SampleType.Right,
+      link: 0
+    });
+    const colliding = createMockSample({ name: 'colliding' });
+    const leftZone = createMockInstrumentZone({ lo: 0, hi: 127 }, left);
+    const collidingZone = createMockInstrumentZone({ lo: 0, hi: 127 }, colliding);
+    const ranges = [{ lo: 0, hi: 127 }];
+
+    const first = assignSamplesToMatrixCells(
+      ranges, ranges, [leftZone, collidingZone], 'first', [left, right, colliding]
+    );
+    const last = assignSamplesToMatrixCells(
+      ranges, ranges, [collidingZone, leftZone], 'last', [left, right, colliding]
+    );
+    const merge = assignSamplesToMatrixCells(
+      ranges, ranges, [leftZone, collidingZone], 'merge', [left, right, colliding]
+    );
+
+    assert.deepStrictEqual(first.sampleJobs.get('stereo-left')?.mixDown, [left, right]);
+    assert.deepStrictEqual(last.sampleJobs.get('stereo-left')?.mixDown, [left, right]);
+    assert.deepStrictEqual(merge.sampleJobs.get('stereo-left')?.mixDown, [left, right, colliding]);
+  });
+
   it('should assign samples to the right cells', () => {
     const zones: InstrumentZone[] = [
       createMockInstrumentZone({ lo: 0, hi: 40 },
