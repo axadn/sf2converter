@@ -1,0 +1,22 @@
+diff --git a/node_modules/soundfont2/lib/SoundFont2.node.js b/node_modules/soundfont2/lib/SoundFont2.node.js
+index 7e6684c..4aef49c 100644
+--- a/node_modules/soundfont2/lib/SoundFont2.node.js
++++ b/node_modules/soundfont2/lib/SoundFont2.node.js
+@@ -1149,7 +1149,16 @@ var getChunk = function getChunk(buffer, start) {
+   var subChunks = [];
+ 
+   if (id === 'RIFF' || id === 'LIST') {
+-    subChunks = getSubChunks(buffer.subarray(start + 12));
++    const payloadStart = start + 12;
++    const payloadLength = length - 4;
++
++    if (payloadLength < 0 || payloadStart + payloadLength > buffer.length) {
++      throw new Error(`Invalid ${id} chunk length: ${length}`);
++    }
++
++    subChunks = getSubChunks(
++      buffer.subarray(payloadStart, payloadStart + payloadLength)
++    );
+   }
+ 
+   return new _riffChunk__WEBPACK_IMPORTED_MODULE_2__["RIFFChunk"](id, length, buffer.subarray(start + 8), subChunks);
