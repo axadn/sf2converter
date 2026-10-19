@@ -4,7 +4,7 @@ import { GeneratorType, InstrumentZone, Range, SampleType } from "soundfont2";
 import { createMockSample } from "./helpers/mockSample";
 import { createMockInstrumentZone } from "./helpers/mockInstrumentZone";
 import { createMockOutputZone } from "./helpers/mockOutputZone";
-import { renderSample } from "../sampleRenderer";
+import { prepareSamplesForMix, renderSample } from "../sampleRenderer";
 
 import * as assert from "node:assert";
 
@@ -107,20 +107,53 @@ describe('sample rendering', () => {
       sampleRate: 44100,
     }, new Int16Array(1024).fill(-12000));
 
-    const monoResult = await renderSample([mono], { bitrate: 128, quality: 5 });
-    const leftResult = await renderSample([left], { bitrate: 128, quality: 5 });
-    const rightResult = await renderSample([right], { bitrate: 128, quality: 5 });
+    const targetRange = { lo: 0, hi: 127 };
+    const monoResult = await renderSample({
+      header: mono.header, keyRange: targetRange, velRange: targetRange, mixDown: [mono]
+    }, { bitrate: 128, quality: 5 });
+    const leftResult = await renderSample({
+      header: left.header, keyRange: targetRange, velRange: targetRange, mixDown: [left]
+    }, { bitrate: 128, quality: 5 });
+    const rightResult = await renderSample({
+      header: right.header, keyRange: targetRange, velRange: targetRange, mixDown: [right]
+    }, { bitrate: 128, quality: 5 });
 
-    assert.ok(Buffer.isBuffer(monoResult));
-    assert.ok(Buffer.isBuffer(leftResult));
-    assert.ok(Buffer.isBuffer(rightResult));
-    assert.ok(monoResult.length > 0);
-    assert.ok(leftResult.length > 0);
-    assert.ok(rightResult.length > 0);
-    for (const result of [monoResult, leftResult, rightResult]) {
+    assert.ok(Buffer.isBuffer(monoResult.data));
+    assert.ok(Buffer.isBuffer(leftResult.data));
+    assert.ok(Buffer.isBuffer(rightResult.data));
+    assert.ok(monoResult.data.length > 0);
+    assert.ok(leftResult.data.length > 0);
+    assert.ok(rightResult.data.length > 0);
+    for (const result of [monoResult.data, leftResult.data, rightResult.data]) {
       assert.strictEqual(result[0], 0xff);
       assert.strictEqual(result[1] & 0xe0, 0xe0);
     }
+  });
+
+  it('transposes pitched samples to the root nearest the target range center', () => {
+    const selected = createMockSample({
+      originalPitch: 60,
+      sampleRate: 44100
+    }, new Int16Array([1, 2, 3]));
+    const toTranspose = createMockSample({
+      originalPitch: 72,
+      sampleRate: 44100
+    }, new Int16Array([0, 10, 20]));
+    const unpitched = createMockSample({
+      originalPitch: 255,
+      sampleRate: 44100
+    }, new Int16Array([5, 6, 7]));
+    const prepared = prepareSamplesForMix({
+      header: toTranspose.header,
+      keyRange: { lo: 59, hi: 63 },
+      velRange: { lo: 0, hi: 127 },
+      mixDown: [toTranspose, selected, unpitched]
+    });
+
+    assert.strictEqual(prepared.header, selected.header);
+    assert.deepStrictEqual(Array.from(prepared.mixDown[0].data), [0, 5, 10, 15, 20]);
+    assert.strictEqual(prepared.mixDown[1], selected);
+    assert.strictEqual(prepared.mixDown[2], unpitched);
   });
 });
 
@@ -177,6 +210,8 @@ describe('sample lookup matrix generator', () => {
     assert.deepStrictEqual(Array.from(mergeResult.sampleJobs.keys()), ['first']);
     assert.deepStrictEqual(mergeResult.zones.map(zone => zone.sampleKey), ['first']);
     assert.deepStrictEqual(mergeResult.sampleJobs.get('first')?.mixDown, [firstSample, lastSample]);
+    assert.deepStrictEqual(mergeResult.sampleJobs.get('first')?.keyRange, { lo: 0, hi: 127 });
+    assert.deepStrictEqual(mergeResult.sampleJobs.get('first')?.velRange, { lo: 0, hi: 127 });
   });
 
   it('should assign samples to the right cells', () => {
@@ -297,7 +332,12 @@ describe('zone resampler', () => {
     const sampleJobs = new Map<string, SampleJob>(
       [lowerLeft, upperRight, unused].map(zone => {
         const sample = createMockSample({ name: zone.sampleKey });
-        return [zone.sampleKey, { header: sample.header, mixDown: [sample] }];
+        return [zone.sampleKey, {
+          header: sample.header,
+          keyRange: zone.keyRange,
+          velRange: zone.velRange,
+          mixDown: [sample]
+        }];
       })
     );
 
@@ -334,7 +374,12 @@ describe('zone resampler', () => {
     });
     const sample = createMockSample({ name: 'source' });
     const sampleJobs = new Map<string, SampleJob>([
-      ['source', { header: sample.header, mixDown: [sample] }]
+      ['source', {
+        header: sample.header,
+        keyRange: source.keyRange,
+        velRange: source.velRange,
+        mixDown: [sample]
+      }]
     ]);
     const fromKeyRanges = [{ lo: 0, hi: 127 }];
     const fromVelocityRanges = [{ lo: 0, hi: 127 }];

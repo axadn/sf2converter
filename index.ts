@@ -53,6 +53,8 @@ export type OutputSample = {
 export type SampleLookupMatrix = (OutputZone|undefined)[][];
 export interface SampleJob {
     header: SampleHeader;
+    keyRange: Range;
+    velRange: Range;
     mixDown: Sample[];
 };
 
@@ -140,15 +142,15 @@ export async function convertSf2(
     let sampleStart = 0;
     let combinedOutputBuffer = Buffer.alloc(0);
     for (const [sampleKey, sampleJob] of sampleJobs) {
-        const renderedSample = await renderSample(sampleJob.mixDown, options.audio);
+        const renderedSample = await renderSample(sampleJob, options.audio);
         samples.push({
             id: sampleKey,
-            header: sampleJob.header,
+            header: renderedSample.header,
             dataStart: sampleStart,
-            dataLength: renderedSample.length
+            dataLength: renderedSample.data.length
         });
-        combinedOutputBuffer = Buffer.concat([combinedOutputBuffer, renderedSample]);
-        sampleStart += renderedSample.length;
+        combinedOutputBuffer = Buffer.concat([combinedOutputBuffer, renderedSample.data]);
+        sampleStart += renderedSample.data.length;
     }
 
     const instrument = {
@@ -223,6 +225,8 @@ export function assignSamplesToMatrixCells(
                         matrix[i][j] = outputZone;
                         sampleJobs.set(zone.sample.header.name, {
                             header: zone.sample.header,
+                            keyRange,
+                            velRange,
                             mixDown: [zone.sample]
                         });
                     } else {
@@ -235,7 +239,7 @@ export function assignSamplesToMatrixCells(
                     matrix[i][j] = outputZone;
                     if (!sampleJobs.has(zone.sample.header.name)) {
                         sampleJobs.set(zone.sample.header.name,
-                            { header: zone.sample.header, mixDown: [zone.sample] });
+                            { header: zone.sample.header, keyRange, velRange, mixDown: [zone.sample] });
                     }
                 }
             }
