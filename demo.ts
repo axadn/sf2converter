@@ -3,7 +3,7 @@ import * as path from 'path';
 import { SoundFont2 } from 'soundfont2';
 import { convertSf2 } from './index';
 
-const buffer = fs.readFileSync(path.resolve('./salamander.sf2'));
+const buffer = fs.readFileSync(path.resolve('./STR_FULL_ENS.sf2'));
 const soundFont = new SoundFont2(buffer);
 console.log(`SoundFont has ${soundFont.instruments.length} instruments.`);
 

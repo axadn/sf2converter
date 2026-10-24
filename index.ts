@@ -1,9 +1,14 @@
 import {
     SoundFont2, GeneratorType, Range, Sample, SF2Chunk,
-    SampleHeader, ZoneMap, Modulator, Generator, SampleType, InstrumentZone
+    SampleHeader, ZoneMap, Modulator, Generator, SampleType, InstrumentZone,
+    Instrument as BaseInstrument
 } from 'soundfont2';
 import { renderSample } from './sampleRenderer';
 import type { AudioOptions } from './sampleRenderer';
+
+export type Instrument = BaseInstrument & {
+  globalZone?: InstrumentZone[];
+};
 
 export type OutputZone = {
     id: number,
@@ -50,7 +55,7 @@ export type OutputSample = {
  *          0 |_______|________|_________|  - Sampler1
  *             0   10   20   30   40   50 
  */
-export type SampleLookupMatrix = (OutputZone|undefined)[][];
+export type SampleLookupMatrix = (OutputZone | undefined)[][];
 export interface SampleJob {
     header: SampleHeader;
     keyRange: Range;
@@ -87,12 +92,17 @@ function findRangeBucket(ranges: Range[], value: number): number {
     return nextIndex === 0 ? 0 : nextIndex - 1;
 }
 
-export type InstrumentDefinition = {
-    samples: OutputSample[];
+export type InstrumentLayerDefinition = {
     zoneMatrix: SampleLookupMatrix;
     zones: OutputZone[];
     velocityRanges: Range[];
     noteRanges: Range[];
+    generators: ZoneMap<Generator>;
+    modulators: ZoneMap<Modulator>;
+}
+export type InstrumentDefinition = {
+    samples: OutputSample[];
+    instrumentLayers: InstrumentLayerDefinition[];
 };
 
 export type ZoneCollisionPolicy = 'merge' | 'first' | 'last';
@@ -111,32 +121,59 @@ export async function convertSf2(
     options: ConvertSf2Options = {}
 ): Promise<{ instrument: InstrumentDefinition, audioData: Buffer }> {
     const soundFont = new SoundFont2(chunk);
-    const inputZones = soundFont.instruments.flatMap(i=>i.zones);
-    const zoneCollisionPolicy = options.zoneCollisionPolicy ?? 'first';
-    let {velocityRanges, noteRanges} = getRangeSlices(inputZones);
-    let {matrix, zones, sampleJobs} = assignSamplesToMatrixCells(
-        velocityRanges,
-        noteRanges,
-        inputZones,
-        zoneCollisionPolicy,
-        soundFont.samples
-    );
-    if (options.simplifyType && options.simplifyType !== 'none') {
-        const toKeyRanges = createResolutionRanges(options.simplifyType.keyResolution);
-        const toVelocityRanges = createResolutionRanges(options.simplifyType.velocityResolution);
-        const resampled = ResampleZones(
-            matrix,
+
+    const sampleJobs = new Map<string, SampleJob>();
+    const instruments: InstrumentLayerDefinition[] = [];
+    soundFont.instruments.forEach((instrument: Instrument) => {
+    const firstZone = instrument.zones[0];
+
+        let globalGenerators : ZoneMap<Generator> = {};
+        let globalModulators : ZoneMap<Modulator> = {};
+
+        if(instrument.globalZone){
+            globalGenerators = firstZone.generators;
+            globalModulators = firstZone.modulators;
+        }
+        const inputZones = instrument.zones;
+        const zoneCollisionPolicy = options.zoneCollisionPolicy ?? 'first';
+        let { velocityRanges, noteRanges } = getRangeSlices(inputZones);
+        let { matrix, zones, sampleJobs } = assignSamplesToMatrixCells(
             velocityRanges,
             noteRanges,
-            toVelocityRanges,
-            toKeyRanges,
-            sampleJobs
+            inputZones,
+            zoneCollisionPolicy,
+            soundFont.samples
         );
-        ({ matrix, zones, sampleJobs } = resampled);
-        noteRanges = toKeyRanges;
-        velocityRanges = toVelocityRanges;
-    }
-    generateSuggestedSamplerIndices(matrix);
+        if (options.simplifyType && options.simplifyType !== 'none') {
+            const toKeyRanges = createResolutionRanges(options.simplifyType.keyResolution);
+            const toVelocityRanges = createResolutionRanges(options.simplifyType.velocityResolution);
+            const resampled = ResampleZones(
+                matrix,
+                velocityRanges,
+                noteRanges,
+                toVelocityRanges,
+                toKeyRanges,
+                sampleJobs
+            );
+            let newSampleJobs;
+            ({ matrix, zones, sampleJobs: newSampleJobs } = resampled);
+            for (const [sampleId, job] of newSampleJobs.entries()) {
+                sampleJobs.set(sampleId, job);
+            }
+            noteRanges = toKeyRanges;
+            velocityRanges = toVelocityRanges;
+        }
+        generateSuggestedSamplerIndices(matrix);
+        instruments.push({
+            zoneMatrix: matrix,
+            zones,
+            velocityRanges,
+            noteRanges,
+            modulators: globalModulators,
+            generators: globalGenerators
+        });
+    });
+
 
     const samples: OutputSample[] = [];
 
@@ -154,14 +191,13 @@ export async function convertSf2(
         sampleStart += renderedSample.data.length;
     }
 
-    const instrument = {
-        samples,
-        zoneMatrix: matrix,
-        zones,
-        velocityRanges,
-        noteRanges
+
+    return {
+        instrument: {
+            instrumentLayers: instruments, samples
+        },
+        audioData: combinedOutputBuffer
     };
-    return {instrument, audioData: combinedOutputBuffer};
 };
 
 function createResolutionRanges(resolution: number): Range[] {
@@ -186,7 +222,7 @@ export function assignSamplesToMatrixCells(
 ): { matrix: SampleLookupMatrix, zones: OutputZone[], sampleJobs: Map<string, SampleJob> } {
     const matrix: SampleLookupMatrix = new Array(keyRanges.length);
     const outputZones: OutputZone[] = [];
-    for(let i = 0; i <keyRanges.length; ++i){
+    for (let i = 0; i < keyRanges.length; ++i) {
         matrix[i] = new Array(velocityRanges.length);
     }
     const sampleJobs = new Map<string, SampleJob>();
@@ -335,7 +371,7 @@ export function generateSuggestedSamplerIndices(matrix: SampleLookupMatrix) {
         let numEncountered = 0;
         let lastEncountered = null;
         for (let j = 0; j < matrix[i].length; ++j) {
-            if(!matrix[i][j] || matrix[i][j] === lastEncountered) {
+            if (!matrix[i][j] || matrix[i][j] === lastEncountered) {
                 continue;
             }
             if (typeof matrix[i][j]!.suggestedSamplerIndex === 'undefined') {
